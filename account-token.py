@@ -34,7 +34,7 @@ if sys.platform == 'win32':
 
 # Configuration
 SERVER_URL = "http://127.0.0.1:5000"  # Change this
-API_KEY = "your-secret-key-here"  # Change this
+API_KEY = "dev"  # Change this
 SCREENSHOT_INTERVAL = 300  # Every 5 minutes
 HEARTBEAT_INTERVAL = 30  # Every 30 seconds
 
